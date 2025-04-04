@@ -1,45 +1,100 @@
-sendWhatsAppBusinessMessage("+1234567890", "Ceci est un message de test via WhatsApp Business.");
+import 'package:flutter/material.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'database.dart';
+import 'sms_scheduler.dart';
 
-void sendMessage(String phone, String message, bool sendSMS, bool sendWhatsApp, bool sendTelegram, bool sendMessenger) {
-  if (sendSMS) {
-    Telephony.instance.sendSms(to: phone, message: message);
-  }
-  if (sendWhatsApp) {
-    sendWhatsAppBusinessMessage(phone, message);
-  }
-  if (sendTelegram) {
-    sendTelegramMessage(message);
-  }
-  if (sendMessenger) {
-    sendMessengerMessage(message);
+void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  Workmanager().initialize(callbackDispatcher);
+  runApp(MyApp());
+}
+
+class MyApp extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      home: MessageSchedulerScreen(),
+    );
   }
 }
 
-import 'dart:convert';
-import 'package:http/http.dart' as http;
+class MessageSchedulerScreen extends StatefulWidget {
+  @override
+  _MessageSchedulerScreenState createState() => _MessageSchedulerScreenState();
+}
 
-Future<void> sendWhatsAppBusinessMessage(String phone, String message) async {
-  final String url = 'https://graph.facebook.com/v12.0/<YourPhoneNumberID>/messages';
-  final String accessToken = '<YourAccessToken>'; // Remplace par ton access token
+class _MessageSchedulerScreenState extends State<MessageSchedulerScreen> {
+  final TextEditingController _phoneController = TextEditingController();
+  final TextEditingController _messageController = TextEditingController();
+  DateTime? _selectedDateTime;
+  final DatabaseHelper _dbHelper = DatabaseHelper();
 
-  final Map<String, dynamic> payload = {
-    'messaging_product': 'whatsapp',
-    'to': phone,
-    'text': {'body': message},
-  };
+  @override
+  void initState() {
+    super.initState();
+    _requestPermissions();
+  }
 
-  final response = await http.post(
-    Uri.parse(url),
-    headers: {
-      'Authorization': 'Bearer $accessToken',
-      'Content-Type': 'application/json',
-    },
-    body: jsonEncode(payload),
-  );
+  void _requestPermissions() async {
+    await Permission.sms.request();
+  }
 
-  if (response.statusCode == 200) {
-    print('Message envoyé avec succès via WhatsApp Business');
-  } else {
-    print('Erreur lors de l\'envoi du message: ${response.body}');
+  void _scheduleMessage() async {
+    if (_phoneController.text.isNotEmpty &&
+        _messageController.text.isNotEmpty &&
+        _selectedDateTime != null) {
+      await _dbHelper.insertMessage(
+        _phoneController.text,
+        _messageController.text,
+        _selectedDateTime!.millisecondsSinceEpoch,
+      );
+
+      scheduleSms(_phoneController.text, _messageController.text, _selectedDateTime!);
+
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Message programmé !")));
+      setState(() {
+        _phoneController.clear();
+        _messageController.clear();
+      });
+    }
+  }
+
+  void _selectDateTime() async {
+    DateTime? picked = await showDatePicker(
+      context: context,
+      initialDate: DateTime.now(),
+      firstDate: DateTime.now(),
+      lastDate: DateTime(2100),
+    );
+
+    if (picked != null) {
+      TimeOfDay? time = await showTimePicker(
+        context: context,
+        initialTime: TimeOfDay.now(),
+      );
+      if (time != null) {
+        setState(() {
+          _selectedDateTime = DateTime(picked.year, picked.month, picked.day, time.hour, time.minute);
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text("Programmation de SMS")),
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          children: [
+            TextField(controller: _phoneController, decoration: InputDecoration(labelText: "Numéro de téléphone")),
+            TextField(controller: _messageController, decoration: InputDecoration(labelText: "Message")),
+            ElevatedButton(onPressed: _selectDateTime, child: Text("Choisir date et heure")),
+            ElevatedButton(onPressed: _scheduleMessage, child: Text("Programmer SMS")),
+          ],
+        ),
+      ),
+    );
   }
 }
